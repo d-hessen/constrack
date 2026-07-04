@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "pip3 install -r python/requirements.txt && tsc -p tsconfig.json",
+    "build": "pip3 install -r python/requirements.txt --break-system-packages && tsc -p tsconfig.json",
     "start": "node dist/index.js"
   },
   "dependencies": {

@@ -10,7 +10,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || '';
 export function ModelPage() {
   const { data } = useAppData();
   const [searchParams] = useSearchParams();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
@@ -21,11 +21,38 @@ export function ModelPage() {
 
   const scanId = searchParams.get("scanId") ?? data.selectedT2;
   const selectedScan = data.scans.find(s => s.id === scanId);
+  // Depend on the id, not the object: scan objects are recreated on every data refresh,
+  // which would otherwise tear down and rebuild the whole WebGL scene each time.
+  const selectedScanId = selectedScan?.id;
 
   useEffect(() => {
-    if (!canvasRef.current || !selectedScan) return;
+    const container = containerRef.current;
+    if (!container || !selectedScanId) return;
+
+    let cancelled = false;
+    const abortController = new AbortController();
 
     // --- 1. SETUP SCENE ---
+    // The renderer creates its own canvas so each mount gets a fresh WebGL context
+    // that can be released explicitly on cleanup.
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+    } catch (err) {
+      // three.js logs the browser's reason ("THREE.WebGLRenderer: A WebGL context could not be created. Reason: ...")
+      console.error(err);
+      setError(
+        "Your browser refused to create a WebGL context, so the 3D viewer can't start. " +
+        "Fully close and reopen the browser, and make sure hardware acceleration is enabled in its settings."
+      );
+      return;
+    }
+    const containerWidth = container.clientWidth || window.innerWidth * 0.9;
+    renderer.setSize(containerWidth, 500);
+    renderer.domElement.style.display = "block";
+    container.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111111);
     sceneRef.current = scene;
@@ -33,11 +60,6 @@ export function ModelPage() {
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 2000);
     camera.position.set(10, 10, 10);
     cameraRef.current = camera;
-
-    const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true });
-    const containerWidth = canvasRef.current.parentElement?.clientWidth || window.innerWidth * 0.9;
-    renderer.setSize(containerWidth, 500);
-    rendererRef.current = renderer;
 
     // Grid (Visual reference)
     const gridHelper = new THREE.GridHelper(30, 30, 0x444444, 0x111111);
@@ -62,7 +84,10 @@ export function ModelPage() {
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
         // Request binary format for faster transfer
-        const response = await fetch(`${API_BASE}/api/scans/${scanId}/points?format=binary`, { headers });
+        const response = await fetch(`${API_BASE}/api/scans/${scanId}/points?format=binary`, {
+          headers,
+          signal: abortController.signal,
+        });
 
         if (!response.ok) {
           // Try to parse error from JSON response
@@ -76,6 +101,7 @@ export function ModelPage() {
 
         // Parse binary response
         const buffer = await response.arrayBuffer();
+        if (cancelled) return;
         const dataView = new DataView(buffer);
 
         // Read header
@@ -184,28 +210,48 @@ export function ModelPage() {
         setTimeout(handleResetView, 100);
 
       } catch (err) {
+        if (cancelled) return;
         console.error(err);
         const msg = err instanceof Error ? err.message : "Error loading";
         setError(msg);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
-    const animate = () => {
-      requestAnimationFrame(animate);
-      if (controlsRef.current) controlsRef.current.update();
+    renderer.setAnimationLoop(() => {
+      controls.update();
       renderer.render(scene, camera);
-    };
-    animate();
+    });
 
-    loadPointCloud(selectedScan.id);
+    loadPointCloud(selectedScanId);
 
     return () => {
-      renderer.dispose();
+      cancelled = true;
+      abortController.abort();
+
+      // Stop rendering and free GPU resources; otherwise each scan switch leaks a
+      // WebGL context until the browser refuses to create new ones.
+      renderer.setAnimationLoop(null);
+      controls.dispose();
+      scene.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        mesh.geometry?.dispose();
+        const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(material)) material.forEach(m => m.dispose());
+        else material?.dispose();
+      });
       scene.clear();
+      renderer.dispose();
+      renderer.forceContextLoss();
+      renderer.domElement.remove();
+
+      sceneRef.current = null;
+      rendererRef.current = null;
+      controlsRef.current = null;
+      cameraRef.current = null;
     };
-  }, [selectedScan]);
+  }, [selectedScanId]);
 
   const handleResetView = () => {
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
@@ -275,7 +321,7 @@ export function ModelPage() {
       </div>
 
       <div className="border border-app rounded-lg overflow-hidden bg-gray-900 relative">
-        <canvas ref={canvasRef} className="w-full h-125 block" />
+        <div ref={containerRef} className="w-full h-125" />
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
             Loading...

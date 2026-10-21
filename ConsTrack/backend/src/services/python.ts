@@ -60,7 +60,7 @@ function runPython<T = unknown>(
   args: string[],
   opts: { timeoutMs?: number } = {}
 ): Promise<T> {
-  const py = process.env.PYTHON_BIN || "python3";
+  const py = process.env.PYTHON_PATH || "python3";
   const script = path.join(ROOT, "python", scriptName);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 

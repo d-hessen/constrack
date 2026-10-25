@@ -244,6 +244,38 @@ export async function createReport(projectId: string, runId: string) {
 export async function deleteReport(id: string) {
   return api(`/api/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
+/**
+ * Downloads a report file (PDF / Excel) from the backend.
+ * Report URLs are backend paths ("/downloads/reports/..."), so a plain <a href> resolves against
+ * the frontend host and lands on the SPA's 404. A direct link to the ngrok host can't send the
+ * header that skips its browser warning page either, so fetch the file and save it as a blob.
+ */
+export async function downloadReportFile(url: string) {
+  const token = localStorage.getItem("constrack_token");
+  const headers: Record<string, string> = {
+    'ngrok-skip-browser-warning': 'true',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(API_BASE + url, { headers });
+  if (res.status === 404) throw new Error("Report file not found on the server");
+  // An HTML response means we hit a web page (SPA fallback, ngrok notice) instead of the file
+  if (!res.ok || res.headers.get("content-type")?.includes("text/html")) {
+    throw new Error(res.statusText || "Download failed");
+  }
+
+  const blobUrl = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = url.split("/").pop() || "report";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoking immediately can cancel the download in some browsers
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+}
 
 export async function chat(prompt: string) {
   return api<{ reply: string }>(`/api/chat`, {

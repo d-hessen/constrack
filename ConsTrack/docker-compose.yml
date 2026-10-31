@@ -1,0 +1,63 @@
+# Production stack for the ConsTrack backend on the AWS Lightsail server.
+#
+#   mongo    – MongoDB 7, data in ./data/mongo, reachable only inside this stack
+#   backend  – Express API + WebSocket + Python pipeline (port 4000, internal only)
+#   caddy    – public HTTPS on 80/443, automatic Let's Encrypt certificate,
+#              reverse-proxies everything (incl. /ws WebSockets) to backend
+#
+# Settings come from two files that are NOT committed:
+#   ./.env          DOMAIN and CORS_ORIGIN (see deploy/server.env.example)
+#   ./backend/.env  backend secrets (JWT_SECRET, BREVO_API_KEY, GEMINI_API_KEY, ...)
+#
+# Everything the app stores lives under ./data — that folder is what to back up.
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - ./data/mongo:/data/db
+    # No "ports:" on purpose — the database is never exposed to the internet.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    env_file: ./backend/.env
+    environment:
+      # These override backend/.env, whose values only make sense on the Windows PC.
+      MONGODB_URI: mongodb://mongo:27017/constrack
+      PYTHON_PATH: /usr/local/bin/python3
+      PORT: "4000"
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    volumes:
+      - ./data/uploads:/app/uploads
+      - ./data/reports:/app/reports
+    expose:
+      - "4000"
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env, e.g. 203-0-113-10.sslip.io}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

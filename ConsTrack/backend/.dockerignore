@@ -1,0 +1,14 @@
+node_modules
+dist
+uploads
+reports
+downloads
+.env
+.env.*
+.venv
+venv
+**/__pycache__
+*.ply
+*.las
+*.laz
+*.e57

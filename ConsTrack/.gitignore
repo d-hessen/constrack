@@ -48,3 +48,8 @@ dist-ssr
 *.laz
 *.pcd
 *.xlsx
+
+# Runtime data (scans, pipeline outputs, generated reports, server database)
+backend/uploads/
+backend/reports/
+data/
